@@ -29,6 +29,8 @@
 > BotFather: https://t.me/BotFather    
 > IDBot: https://t.me/myidbot
 
+如需在长时间抢机时定时收到 Telegram 心跳消息，可在 `oci-help.ini` 默认配置段增加 `heartbeatMinutes=60`。设置为 `0` 或留空表示关闭。
+
 
 ## 运行程序
 ```bash
@@ -54,4 +56,3 @@ screen -r oci-help
 本项目 CDN 加速及安全防护由 [Tencent EdgeOne](https://edgeone.ai/zh?from=github "Tencent EdgeOne") 赞助
 
 [![Tencent EdgeOne](https://edgeone.ai/media/34fe3a45-492d-4ea4-ae5d-ea1087ca7b4b.png)](https://edgeone.ai/zh?from=github)
-

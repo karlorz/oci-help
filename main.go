@@ -1,24 +1,24 @@
 /*
-  甲骨文云API文档
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/
+甲骨文云API文档
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/
 
-  实例:
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Instance/
-  VCN:
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Vcn/
-  Subnet:
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Subnet/
-  VNIC:
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Vnic/
-  VnicAttachment:
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/VnicAttachment/
-  私有IP
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/PrivateIp/
-  公共IP
-  https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/PublicIp/
+实例:
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Instance/
+VCN:
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Vcn/
+Subnet:
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Subnet/
+VNIC:
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Vnic/
+VnicAttachment:
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/VnicAttachment/
+私有IP
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/PrivateIp/
+公共IP
+https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/PublicIp/
 
-  获取可用性域
-  https://docs.oracle.com/en-us/iaas/api/#/en/identity/20160918/AvailabilityDomain/ListAvailabilityDomains
+获取可用性域
+https://docs.oracle.com/en-us/iaas/api/#/en/identity/20160918/AvailabilityDomain/ListAvailabilityDomains
 */
 package main
 
@@ -73,6 +73,7 @@ var (
 	token               string
 	chat_id             string
 	cmd                 string
+	heartbeatInterval   time.Duration
 	sendMessageUrl      string
 	editMessageUrl      string
 	EACH                bool
@@ -131,6 +132,7 @@ func main() {
 	token = defSec.Key("token").Value()
 	chat_id = defSec.Key("chat_id").Value()
 	cmd = defSec.Key("cmd").Value()
+	heartbeatInterval = getHeartbeatInterval(cfg)
 	if defSec.HasKey("EACH") {
 		EACH, _ = defSec.Key("EACH").Bool()
 	} else {
@@ -1118,6 +1120,10 @@ func LaunchInstances(ads []identity.AvailabilityDomain) (sum, num int32) {
 	var SUCCESS = false   // 创建是否成功
 
 	var startTime = time.Now()
+	var nextHeartbeatAt time.Time
+	if heartbeatInterval > 0 {
+		nextHeartbeatAt = startTime.Add(heartbeatInterval)
+	}
 
 	var bootVolumeSize float64
 	if instance.BootVolumeSizeInGBs > 0 {
@@ -1249,11 +1255,12 @@ func LaunchInstances(ads []identity.AvailabilityDomain) (sum, num int32) {
 
 			sleepRandomSecond(minTime, maxTime)
 
+			willRetry := false
 			if AD_NOT_FIXED {
 				if !EACH_AD {
 					if adIndex < adCount {
 						// 没有设置可用性域，且没有设置each。即在获取到的每个可用性域里尝试创建。当前使用的可用性域不是最后一个，继续尝试。
-						continue
+						willRetry = true
 					} else {
 						// 当前使用的可用性域是最后一个，判断失败次数是否达到重试次数，未达到重试次数继续尝试。
 						failTimes++
@@ -1276,17 +1283,19 @@ func LaunchInstances(ads []identity.AvailabilityDomain) (sum, num int32) {
 
 						// 判断是否需要重试
 						if (retry < 0 || failTimes <= retry) && adCount > 0 {
-							continue
+							willRetry = true
 						}
 					}
 
-					adIndex = 0
+					if !willRetry {
+						adIndex = 0
+					}
 
 				} else {
 					// 没有设置可用性域，且设置了each，即在每个域创建each个实例。判断失败次数继续尝试。
 					failTimes++
 					if (retry < 0 || failTimes <= retry) && !SKIP_RETRY {
-						continue
+						willRetry = true
 					}
 				}
 
@@ -1294,8 +1303,13 @@ func LaunchInstances(ads []identity.AvailabilityDomain) (sum, num int32) {
 				//设置了可用性域，判断是否需要重试
 				failTimes++
 				if (retry < 0 || failTimes <= retry) && !SKIP_RETRY {
-					continue
+					willRetry = true
 				}
+			}
+
+			if willRetry {
+				maybeSendCreateHeartbeat(&nextHeartbeatAt, pos, sum, runTimes, failTimes, adName, shape, bootVolumeSize, startTime, errInfo)
+				continue
 			}
 
 		}
@@ -1314,6 +1328,9 @@ func LaunchInstances(ads []identity.AvailabilityDomain) (sum, num int32) {
 		// 重置尝试创建实例次数
 		runTimes = 0
 		startTime = time.Now()
+		if heartbeatInterval > 0 {
+			nextHeartbeatAt = startTime.Add(heartbeatInterval)
+		}
 
 		// for 循环次数+1
 		pos++
@@ -2504,6 +2521,49 @@ func fmtDuration(d time.Duration) string {
 		buffer.WriteString(fmt.Sprintf("%d 秒", seconds))
 	}
 	return buffer.String()
+}
+
+func getHeartbeatInterval(cfg *ini.File) time.Duration {
+	for _, sectionName := range []string{ini.DefaultSection, "INSTANCE"} {
+		section := cfg.Section(sectionName)
+		if section == nil || !section.HasKey("heartbeatMinutes") {
+			continue
+		}
+		minutes, _ := section.Key("heartbeatMinutes").Int64()
+		if minutes > 0 {
+			return time.Duration(minutes) * time.Minute
+		}
+	}
+	return 0
+}
+
+func maybeSendCreateHeartbeat(nextHeartbeatAt *time.Time, pos, sum, runTimes, failTimes int32, adName *string, shape core.Shape, bootVolumeSize float64, startTime time.Time, lastErr string) {
+	if heartbeatInterval <= 0 || nextHeartbeatAt == nil || nextHeartbeatAt.IsZero() {
+		return
+	}
+	if time.Now().Before(*nextHeartbeatAt) {
+		return
+	}
+
+	var availabilityDomain string
+	if adName != nil {
+		availabilityDomain = *adName
+	}
+	duration := fmtDuration(time.Since(startTime))
+
+	printf("\033[1;36m[%s] 心跳: 第 %d/%d 个实例仍在尝试, 当前尝试次数: %d, 已耗时: %s\033[0m\n", oracleSectionName, pos+1, sum, runTimes, duration)
+
+	text := fmt.Sprintf("创建任务仍在进行中💓\n区域: %s\n当前账号: %s\n当前进度: 第 %d/%d 个实例\n可用性域: %s\n实例配置: %s\nOCPU计数: %g\n内存(GB): %g\n引导卷(GB): %g\n当前尝试次数: %d\n失败轮次: %d\n已耗时: %s", oracle.Region, oracleSectionName, pos+1, sum, availabilityDomain, *shape.Shape, *shape.Ocpus, *shape.MemoryInGBs, bootVolumeSize, runTimes, failTimes, duration)
+	if lastErr != "" {
+		text += "\n最近错误: " + lastErr
+	}
+
+	_, err := sendMessage(fmt.Sprintf("[%s]", oracleSectionName), text)
+	if err != nil {
+		printlnErr("Telegram 心跳消息发送失败", err.Error())
+	}
+
+	*nextHeartbeatAt = time.Now().Add(heartbeatInterval)
 }
 
 func printf(format string, a ...interface{}) {
