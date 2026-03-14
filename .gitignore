@@ -19,3 +19,4 @@
 *.pem
 build/
 example/
+logs/
