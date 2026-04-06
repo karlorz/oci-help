@@ -24,22 +24,22 @@ Recent history uses short, one-line commit subjects, often in Chinese, for examp
 Do not commit real OCI credentials, Telegram tokens, private keys, or `.pem` files. Treat `oci-help.ini` as local-only configuration and sanitize any example values before sharing logs or screenshots.
 
 ## VPS Production Usage
-The `ca01` host runs `oci-help` as a `systemd` batch service. Use these commands for routine operations:
+The `ca01` host now runs `oci-help` as two separate `systemd` services so `SG01` and `CA01` retry independently. The legacy `oci-help` service is deprecated and should remain disabled. Use these commands for routine operations:
 
-- Check status: `ssh ca01 'systemctl status oci-help --no-pager'`
-- Start a batch run: `ssh ca01 'systemctl start oci-help'`
-- Restart a batch run: `ssh ca01 'systemctl restart oci-help'`
-- Stop the current run: `ssh ca01 'systemctl stop oci-help'`
+- Check status: `ssh ca01 'systemctl status oci-help-sg01 oci-help-ca01 --no-pager -l'`
+- Start both services: `ssh ca01 'systemctl start oci-help-sg01 oci-help-ca01'`
+- Restart both services: `ssh ca01 'systemctl restart oci-help-sg01 oci-help-ca01'`
+- Stop both services: `ssh ca01 'systemctl stop oci-help-sg01 oci-help-ca01'`
 
 To see logs:
 
-- Follow stdout log: `ssh ca01 'tail -f /var/log/oci-help-batch.log'`
-- Follow stderr log: `ssh ca01 'tail -f /var/log/oci-help-batch.err.log'`
-- Show recent stdout: `ssh ca01 'tail -n 100 /var/log/oci-help-batch.log'`
-- Show recent journal entries: `ssh ca01 'journalctl -u oci-help -n 100 --no-pager'`
+- Follow both stdout logs: `ssh ca01 'tail -f /var/log/oci-help-sg01.log /var/log/oci-help-ca01.log'`
+- Follow both stderr logs: `ssh ca01 'tail -f /var/log/oci-help-sg01.err.log /var/log/oci-help-ca01.err.log'`
+- Show recent stdout: `ssh ca01 'tail -n 100 /var/log/oci-help-sg01.log /var/log/oci-help-ca01.log'`
+- Show recent journal entries: `ssh ca01 'journalctl -u oci-help-sg01 -u oci-help-ca01 -n 100 --no-pager'`
 
 To inspect what is configured:
 
-- Show service file: `ssh ca01 'systemctl cat oci-help'`
-- Show batch wrapper: `ssh ca01 'sed -n "1,120p" /root/bin/oci-help-batch'`
-- Show production config: `ssh ca01 'sed -n "1,220p" /root/.config/oci-help/oci-help.ini'`
+- Show service files: `ssh ca01 'systemctl cat oci-help-sg01 oci-help-ca01'`
+- Show batch wrappers: `ssh ca01 'sed -n "1,120p" /root/bin/oci-help-batch-sg01 && printf "\n=====\n" && sed -n "1,120p" /root/bin/oci-help-batch-ca01'`
+- Show production configs: `ssh ca01 'sed -n "1,220p" /root/.config/oci-help/oci-help-sg01.ini && printf "\n=====\n" && sed -n "1,220p" /root/.config/oci-help/oci-help-ca01.ini'`
